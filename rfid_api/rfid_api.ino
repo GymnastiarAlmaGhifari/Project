@@ -3,10 +3,14 @@
 #include <ESP8266WiFi.h>
 #include <ArduinoJson.h>
 #include <ESP8266HTTPClient.h>
+#include <SoftwareSerial.h>
 
-const char* ssid = "SMK TRUNOJOYO";
-const char* password = "tanyamasoki";
-const char* server = "192.168.2.6";
+const char* ssid = "Barokah";
+const char* password = "gakdipassword";
+// const char* ssid = "SMK TRUNOJOYO";
+// const char* password = "tanyamasoki";
+// const char* server = "192.168.2.12";
+const char* server = "192.168.192.72";
 const int port = 3000;
 
 constexpr uint8_t RST_PIN = 0;  // Gunakan nomor GPIO yang sesuai
@@ -14,11 +18,17 @@ constexpr uint8_t SS_PIN = 2;   // Gunakan nomor GPIO yang sesuai
 
 MFRC522 rfid(SS_PIN, RST_PIN); // Instance dari kelas MFRC522
 MFRC522::MIFARE_Key key;
+SoftwareSerial esp32Serial(-1, 16); // Hanya menggunakan pin GPIO16 (D0) sebagai TX
+// SoftwareSerial esp32Serial(16, -1);
+// SoftwareSerial esp32Serial(16, 5);  // RX dan TX yang terhubung ke ESP32-CAM
+
 
 WiFiClient NodeMCU;
+String response; // Deklarasi 'response' sebagai variabel String
 
 void setup() {
   Serial.begin(9600);
+  esp32Serial.begin(115200);
   SPI.begin(); // Init bus SPI
   rfid.PCD_Init(); // Init MFRC522
 
@@ -32,8 +42,6 @@ void setup() {
 }
 
 void loop() {
-  String response; // Deklarasi 'response' sebagai variabel String
-
   if (!rfid.PICC_IsNewCardPresent())
     return;
   if (rfid.PICC_ReadCardSerial()) {
@@ -62,10 +70,28 @@ void loop() {
 
       // Ekstrak "nama_kambing" dari respons
       String namaKambing = responseJson["rfidData"][0]["nama_kambing"].as<String>();
+      String id = responseJson["rfidData"][0]["id_kambing"].as<String>();
 
       // Langkah 3: Membangun payload JSON untuk notifikasi
       StaticJsonDocument<200> notificationData;
       notificationData["message_notifications"] = "RFID Tag: " + tag + ", Nama Kambing: " + namaKambing;
+      notificationData["tag_id"] = id;
+
+      // kirim id ke esp32 esp32Serial
+      // esp32Serial.write(id.c_str(), id.length());
+      // esp32Serial.println();  // Tambahkan newline untuk memisahkan data RFID yang dikirim
+      String trimId = "";
+
+      trimId = id;
+      trimId.trim();
+
+        for (size_t i = 0; i < trimId.length(); i++) {
+          esp32Serial.print(trimId.charAt(i));
+          delay(20); // Tambahkan penundaan kecil di sini
+        }
+        esp32Serial.print('#');
+      Serial.println("Kirim UID RFID ke ESP32 CAM");
+      Serial.println("id: " + id);
 
       String notificationPayload;
       serializeJson(notificationData, notificationPayload);
@@ -88,14 +114,14 @@ void loop() {
       DynamicJsonDocument responseJson(200);
       deserializeJson(responseJson, response);
 
-      String errorMessage = "RFID tidak ditemukan dalam database";
+      String errorMessage = "RFID:"+ tag + "tidak ditemukan dalam database";
 
       StaticJsonDocument<200> notificationData;
       notificationData["message_notifications"] = errorMessage;
 
       String notificationPayload;
       serializeJson(notificationData, notificationPayload);
-      Serial.println("Response: " + response);
+      // Serial.println("Response: " + response);
 
 
       // Kirim notifikasi dengan pesan yang sesuai
@@ -108,7 +134,7 @@ void loop() {
       int notificationResponseCode = notificationClient.POST(notificationPayload);
 
       if (notificationResponseCode != 200) {
-        Serial.println("Failed to send notification. Status code: " + String(notificationResponseCode));
+        // Serial.println("Failed to send notification. Status code: " + String(notificationResponseCode));
       }
     } else {
       // Kesalahan umum lainnya, kirim notifikasi dengan pesan kesalahan umum
@@ -128,7 +154,7 @@ void loop() {
       int notificationResponseCode = notificationClient.POST(notificationPayload);
 
       if (notificationResponseCode != 200) {
-        Serial.println("Failed to send notification. Status code: " + String(notificationResponseCode));
+        // Serial.println("Failed to send notification. Status code: " + String(notificationResponseCode));
       }
     }
 
