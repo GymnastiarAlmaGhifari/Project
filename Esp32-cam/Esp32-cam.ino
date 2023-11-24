@@ -4,15 +4,20 @@
 #include "soc/rtc_cntl_reg.h"
 #include "esp_camera.h"
 
-const char* ssid = "SMK TRUNOJOYO";
-const char* password = "tanyamasoki";
+const char* ssid = "Barokah";
+const char* password = "gakdipassword";
 
-const char* server = "192.168.2.3";
-String serverPath = "/api/socket/image";
+const char* server = "192.168.7.72";
 
-const int serverPort = 3000;
+
+String serverPathWebsite = "/api/socket/image";
+String serverPathPython = "/api/python/image";
+
+const int serverPortWebsite = 3000;
+const int serverPortPython = 5000;
 
 String id = "";
+String tanggal_lahir = "";
 
 WiFiClient client;
 
@@ -32,23 +37,18 @@ WiFiClient client;
 #define VSYNC_GPIO_NUM    25
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
+#define LED_Flash 4
 
 void setup() {
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); 
   Serial.begin(115200);
-
   WiFi.mode(WIFI_STA);
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  WiFi.begin(ssid, password);  
+  WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
     delay(500);
   }
-  Serial.println();
-  Serial.print("ESP32-CAM IP Address: ");
-  Serial.println(WiFi.localIP());
+
+  pinMode(LED_Flash, OUTPUT);
 
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -84,7 +84,6 @@ void setup() {
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x", err);
     delay(1000);
     ESP.restart();
   }
@@ -92,33 +91,51 @@ void setup() {
 
 void loop() {
   if (Serial.available()) {
-    id = Serial.readStringUntil('#');
-    Serial.println(id);
-    sendPhoto(id);
+    String id = Serial.readStringUntil('#');
+    if (!id.isEmpty()) {
+      // sendPhoto(id, serverPathWebsite, serverPortWebsite);
+      sendPhoto(id, serverPathPython, serverPortPython);
+      // Membersihkan data ID setelah digunakan
+      id = ""; // atau id.clear();
+    }
   }
 }
 
-String sendPhoto(String id) {
+String sendPhoto(String id,  String serverPath, int serverPort) {
+
   String getAll;
   String getBody;
 
-  camera_fb_t *fb = esp_camera_fb_get();
-  if (!fb) {
-    Serial.println("Camera capture failed");
-    delay(1000);
-    ESP.restart();
-  }
+    // pre capture for accurate timing
+for (int i = 0; i <= 3; i++) {
+    camera_fb_t * fb = NULL;
+    fb = esp_camera_fb_get();
+    if (!fb) {
+        Serial.println("Camera capture failed");
+        delay(1000);
+        ESP.restart();
+        break; // Mengganti return dengan break
+    } 
+    esp_camera_fb_return(fb);
+    delay(200);
+}
+  
+  camera_fb_t * fb = NULL;
+  digitalWrite(LED_Flash, HIGH);
+  delay(200);
+  fb = esp_camera_fb_get();
 
   if (client.connect(server, serverPort)) {
-    Serial.println("Connection successful!");
-    String head = "--RandomNerdTutorials\r\nContent-Disposition: form-data; name=\"imageFile\"; filename=\"esp32-cam.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n";
+
+    String request = "POST " + serverPath + "?id=" + id + " HTTP/1.1";
+    String head = "--RandomNerdTutorials\r\nContent-Disposition: form-data; name=\"imageFile\"; filename=\"" + id + "\"\r\nContent-Type: image/jpeg\r\n\r\n";
     String tail = "\r\n--RandomNerdTutorials--\r\n";
 
     uint32_t imageLen = fb->len;
     uint32_t extraLen = head.length() + tail.length();
     uint32_t totalLen = imageLen + extraLen;
 
-    client.println("POST " + serverPath + "?id=" + id + " HTTP/1.1");
+    client.println(request);
     client.println("Host: " + String(server));
     client.println("Content-Length: " + String(totalLen));
     client.println("Content-Type: multipart/form-data; boundary=RandomNerdTutorials");
@@ -139,39 +156,13 @@ String sendPhoto(String id) {
     client.print(tail);
 
     esp_camera_fb_return(fb);
+    
+    digitalWrite(LED_Flash, LOW);
 
-    int timeoutTimer = 10000;
-    long startTimer = millis();
-    boolean state = false;
 
-    while ((startTimer + timeoutTimer) > millis()) {
-      Serial.print(".");
-      delay(100);
-      while (client.available()) {
-        char c = client.read();
-        if (c == '\n') {
-          if (getAll.length() == 0) {
-            state = true;
-          }
-          getAll = "";
-        } else if (c != '\r') {
-          getAll += String(c);
-        }
-        if (state == true) {
-          getBody += String(c);
-        }
-        startTimer = millis();
-      }
-      if (getBody.length() > 0) {
-        break;
-      }
-    }
-    Serial.println();
     client.stop();
-    Serial.println(getBody);
   } else {
     getBody = "Connection to " + String(server) + " failed.";
-    Serial.println(getBody);
   }
   return getBody;
 }
